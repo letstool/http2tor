@@ -1,0 +1,314 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "http2tor \u2014 Tor Network Detection API",
+    "description": "Detects whether one or more IP addresses belong to the Tor network. The database is built automatically from a gzipped CSV served by the letstool CDN (https://cdn.letstool.net/tor/csv) and refreshed at a configurable interval. Each IP is classified by node type (guard, exit, middle, authority) with full relay metadata.",
+    "version": "1.0.0",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local server"
+    }
+  ],
+  "paths": {
+    "/db/tor": {
+      "get": {
+        "summary": "Download the current tor.mmdb database file",
+        "description": "Serves the current tor.mmdb binary. Useful for peer instances to sync without fetching from the CDN.",
+        "operationId": "getDB",
+        "responses": {
+          "200": {
+            "description": "tor.mmdb binary",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Database not yet built"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI 3.1 specification",
+        "operationId": "getOpenAPI",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Embedded interactive web UI",
+        "operationId": "getUI",
+        "responses": {
+          "200": {
+            "description": "HTML web UI",
+            "content": {
+              "text/html": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/istor": {
+      "post": {
+        "summary": "Check one or more IPs against the Tor network database",
+        "description": "Accepts a single IP (ip) or a batch (ips). Returns Tor membership and relay metadata. Exactly one of ip or ips must be provided.",
+        "operationId": "isTor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TorRequest"
+              },
+              "examples": {
+                "single": {
+                  "summary": "Single IP",
+                  "value": {
+                    "ip": "185.220.101.1"
+                  }
+                },
+                "batch": {
+                  "summary": "Batch IPs",
+                  "value": {
+                    "ips": [
+                      "185.220.101.1",
+                      "78.109.18.140",
+                      "8.8.8.8"
+                    ]
+                  }
+                },
+                "ipv6": {
+                  "summary": "IPv6",
+                  "value": {
+                    "ip": "2a0b:f4c2::1"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tor lookup result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorResponse"
+                },
+                "examples": {
+                  "tor_exit": {
+                    "summary": "Exit node found",
+                    "value": {
+                      "status": "SUCCESS",
+                      "answers": [
+                        {
+                          "ip": "185.220.101.1",
+                          "is_tor": true,
+                          "node_type": "exit",
+                          "flags": [
+                            "Exit",
+                            "Fast",
+                            "Running",
+                            "Stable",
+                            "Valid"
+                          ],
+                          "nickname": "TorExitRelay",
+                          "fingerprint": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                          "country": "DE",
+                          "latitude": 51.3,
+                          "longitude": 9.5,
+                          "as": "AS24940",
+                          "as_name": "Hetzner Online GmbH",
+                          "first_seen": "2022-03-15 00:00:00",
+                          "last_seen": "2024-01-10 12:00:00",
+                          "consensus_weight": 48210,
+                          "is_guard": false,
+                          "is_exit": true,
+                          "is_middle": false,
+                          "is_authority": false,
+                          "is_hsdir": false
+                        }
+                      ]
+                    }
+                  },
+                  "not_tor": {
+                    "summary": "Not a Tor node",
+                    "value": {
+                      "status": "NOTFOUND",
+                      "answers": [
+                        {
+                          "ip": "8.8.8.8",
+                          "is_tor": false
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TorRequest": {
+        "type": "object",
+        "description": "Exactly one of ip or ips must be provided.",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Single IPv4 or IPv6 address.",
+            "example": "185.220.101.1"
+          },
+          "ips": {
+            "type": "array",
+            "description": "Batch of IPv4/IPv6 addresses (max controlled by TOR_MAX_IPS, default 100).",
+            "items": {
+              "type": "string",
+              "example": "185.220.101.1"
+            }
+          }
+        }
+      },
+      "TorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "SUCCESS",
+              "NOTFOUND",
+              "ERROR"
+            ],
+            "description": "SUCCESS: at least one Tor node found. NOTFOUND: no Tor nodes. ERROR: bad request or DB not ready."
+          },
+          "answers": {
+            "type": "array",
+            "description": "One entry per queried IP.",
+            "items": {
+              "$ref": "#/components/schemas/TorAnswer"
+            }
+          }
+        }
+      },
+      "TorAnswer": {
+        "type": "object",
+        "required": [
+          "ip",
+          "is_tor"
+        ],
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "The queried IP address."
+          },
+          "is_tor": {
+            "type": "boolean",
+            "description": "true if the IP belongs to the Tor network."
+          },
+          "node_type": {
+            "type": "string",
+            "enum": [
+              "guard",
+              "exit",
+              "guard_and_exit",
+              "middle",
+              "authority"
+            ],
+            "description": "Node classification."
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Raw Tor consensus flags (Guard, Exit, Fast, Stable, HSDir, Authority, Running, Valid, V2Dir, etc.)."
+          },
+          "nickname": {
+            "type": "string",
+            "description": "Relay nickname."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "40-hex-char relay fingerprint (SHA-1 of public key)."
+          },
+          "country": {
+            "type": "string",
+            "description": "ISO 3166-1 alpha-2 country code (uppercase)."
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Approximate relay latitude."
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Approximate relay longitude."
+          },
+          "as": {
+            "type": "string",
+            "description": "Autonomous System number, e.g. AS24940."
+          },
+          "as_name": {
+            "type": "string",
+            "description": "Autonomous System name."
+          },
+          "first_seen": {
+            "type": "string",
+            "description": "First appearance in Tor consensus (UTC, YYYY-MM-DD HH:MM:SS)."
+          },
+          "last_seen": {
+            "type": "string",
+            "description": "Last seen in Tor consensus (UTC)."
+          },
+          "consensus_weight": {
+            "type": "integer",
+            "description": "Relay consensus weight (bandwidth proxy for path selection)."
+          },
+          "is_guard": {
+            "type": "boolean",
+            "description": "true if the relay has the Guard flag (entry node)."
+          },
+          "is_exit": {
+            "type": "boolean",
+            "description": "true if the relay has the Exit flag (exit node)."
+          },
+          "is_middle": {
+            "type": "boolean",
+            "description": "true if the relay is a middle/interior node."
+          },
+          "is_authority": {
+            "type": "boolean",
+            "description": "true if the relay is a Tor directory authority."
+          },
+          "is_hsdir": {
+            "type": "boolean",
+            "description": "true if the relay has the HSDir (Hidden Service Directory) flag."
+          }
+        }
+      }
+    }
+  }
+}

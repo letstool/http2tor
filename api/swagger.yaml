@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: http2tor — Tor Network Detection API
+  description: |
+    Detects whether one or more IP addresses belong to the Tor network.
+    The internal database is built automatically from the official Tor Project
+    **letstool CDN (`https://cdn.letstool.net/tor/csv`) and refreshed at a configurable interval.
+
+    Each IP is classified by node type (guard, exit, middle, authority) and includes
+    full relay metadata: flags, nickname, fingerprint, country, AS, first/last seen,
+    and consensus weight.
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local server
+
+paths:
+
+  /api/v1/istor:
+    post:
+      summary: Check one or more IPs against the Tor network database
+      description: |
+        Accepts a **single IP** (`ip`) or a **batch** (`ips`). Returns Tor membership
+        status and, for Tor nodes, full relay metadata.
+
+        Exactly one of `ip` or `ips` must be provided per request.
+        Maximum batch size is controlled by `TOR_MAX_IPS` / `-max-ips` (default 100).
+
+      operationId: isTor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TorRequest"
+            examples:
+              single:
+                summary: Single IP lookup
+                value:
+                  ip: "185.220.101.1"
+              batch:
+                summary: Batch IP lookup
+                value:
+                  ips:
+                    - "185.220.101.1"
+                    - "78.109.18.140"
+                    - "8.8.8.8"
+              ipv6:
+                summary: IPv6 lookup
+                value:
+                  ip: "2a0b:f4c2::1"
+
+      responses:
+        "200":
+          description: Tor lookup result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TorResponse"
+        "405":
+          description: Method not allowed — only POST is accepted
+
+  /db/tor:
+    get:
+      summary: Download the current tor.mmdb database file
+      description: |
+        Serves the current `tor.mmdb` binary. Useful for peer instances that want to
+        synchronise their database from a trusted upstream without fetching from the CDN.
+        The file is a standard MaxMind-compatible mmdb with a custom Tor schema.
+      operationId: getDB
+      responses:
+        "200":
+          description: tor.mmdb binary file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Database not yet built
+
+  /openapi.json:
+    get:
+      summary: OpenAPI 3.1 specification (this document, JSON format)
+      operationId: getOpenAPI
+      responses:
+        "200":
+          description: OpenAPI JSON document
+          content:
+            application/json: {}
+
+  /:
+    get:
+      summary: Embedded interactive web UI
+      description: |
+        Browser-based interface for single and batch Tor detection.
+        Supports dark/light themes and 8 languages.
+      operationId: getUI
+      responses:
+        "200":
+          description: HTML web UI
+          content:
+            text/html: {}
+
+components:
+  schemas:
+
+    TorRequest:
+      type: object
+      description: Exactly one of `ip` or `ips` must be provided.
+      properties:
+        ip:
+          type: string
+          description: Single IPv4 or IPv6 address to check.
+          example: "185.220.101.1"
+        ips:
+          type: array
+          description: >
+            Batch of IPv4/IPv6 addresses to check. Maximum count is controlled by
+            `TOR_MAX_IPS` / `-max-ips` (default 100).
+          items:
+            type: string
+            example: "185.220.101.1"
+
+    TorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [SUCCESS, NOTFOUND, ERROR]
+          description: |
+            - `SUCCESS`: at least one Tor node was found; `answers` is populated.
+            - `NOTFOUND`: no Tor nodes found; `answers` may contain non-Tor entries.
+            - `ERROR`: malformed request or database not yet initialised.
+        answers:
+          type: array
+          description: >
+            One entry per queried IP. Always includes every IP that was checked;
+            non-Tor IPs have `is_tor: false` and omit relay metadata fields.
+          items:
+            $ref: "#/components/schemas/TorAnswer"
+
+    TorAnswer:
+      type: object
+      required: [ip, is_tor]
+      properties:
+        ip:
+          type: string
+          description: The queried IP address.
+        is_tor:
+          type: boolean
+          description: "`true` if the IP belongs to the Tor network."
+        node_type:
+          type: string
+          enum: [guard, exit, guard_and_exit, middle, authority]
+          description: >
+            Node classification derived from consensus flags.
+            `guard_and_exit` means the relay carries both flags simultaneously.
+        flags:
+          type: array
+          items:
+            type: string
+          description: >
+            Raw Tor consensus flags assigned to this relay
+            (e.g. `Guard`, `Exit`, `Fast`, `Stable`, `HSDir`, `Authority`,
+            `Running`, `Valid`, `V2Dir`).
+        nickname:
+          type: string
+          description: Human-readable relay nickname.
+        fingerprint:
+          type: string
+          description: 40-hex-character relay fingerprint (SHA-1 of the relay's public key).
+        country:
+          type: string
+          description: ISO 3166-1 alpha-2 country code (uppercase), from the CDN CSV.
+        latitude:
+          type: number
+          description: Approximate latitude of the relay.
+        longitude:
+          type: number
+          description: Approximate longitude of the relay.
+        as:
+          type: string
+          description: Autonomous System number (e.g. `AS24940`).
+        as_name:
+          type: string
+          description: Autonomous System name.
+        first_seen:
+          type: string
+          description: >
+            Date/time the relay first appeared in the Tor consensus
+            (UTC, `YYYY-MM-DD HH:MM:SS` format).
+        last_seen:
+          type: string
+          description: Date/time the relay was last seen in the consensus (UTC).
+        consensus_weight:
+          type: integer
+          description: >
+            Relay consensus weight — a bandwidth proxy used by Tor clients for
+            circuit path selection. Higher values indicate more bandwidth.
+        is_guard:
+          type: boolean
+          description: "`true` if the relay has the `Guard` flag (entry node)."
+        is_exit:
+          type: boolean
+          description: "`true` if the relay has the `Exit` flag (exit node)."
+        is_middle:
+          type: boolean
+          description: "`true` if the relay is a middle/interior node (no Guard or Exit flag)."
+        is_authority:
+          type: boolean
+          description: "`true` if the relay is a Tor directory authority."
+        is_hsdir:
+          type: boolean
+          description: "`true` if the relay has the `HSDir` (Hidden Service Directory) flag."

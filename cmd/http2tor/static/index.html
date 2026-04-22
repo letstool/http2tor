@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" sizes="512x512" href="/favicon.png">
+<title>http2tor — Tor Detection</title>
+<style>
+  :root{
+    --bg:#0a0e14;--surface:#0f1520;--border:#1e2d45;--border-hi:#2a4060;
+    --accent:#00d4ff;--accent2:#0090cc;--accent-dim:#003a52;
+    --text:#c8d8e8;--text-dim:#4a6480;--text-mid:#7a9ab8;
+    --ok:#00d48a;--ok-dim:#003d28;--warn:#ffb340;--warn-dim:#3d2a00;
+    --err:#ff4e6a;--err-dim:#3d0010;
+    --tor:#00d4ff;--tor-dim:#003a52;--notor:#4a6480;--notor-dim:#0a0e14;
+    --grid-a:rgba(30,45,69,.30);--grid-b:rgba(30,45,69,.15);
+    --radial:rgba(0,180,255,.07);--panel-tint:rgba(0,212,255,.04);
+    --sel-bg:#0f1520;--raw-bg:#070b10;--ring:#00d4ff;
+    --mono:'Courier New','Lucida Console',monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Arial,sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#eef3f9;--surface:#fff;--border:#c8d8ec;--border-hi:#a0bcd8;
+    --accent:#0070a0;--accent2:#005278;--accent-dim:#d4eaf8;
+    --text:#152030;--text-dim:#7898b8;--text-mid:#3a6080;
+    --ok:#006e48;--ok-dim:#d0f0e4;--warn:#8c5200;--warn-dim:#fff0d0;
+    --err:#b0002a;--err-dim:#fde8ef;
+    --tor:#0070a0;--tor-dim:#d4eaf8;--notor:#888898;--notor-dim:#eef3f9;
+    --grid-a:rgba(150,190,225,.28);--grid-b:rgba(150,190,225,.14);
+    --radial:rgba(0,120,180,.06);--panel-tint:rgba(0,112,160,.04);
+    --sel-bg:#fff;--raw-bg:#f4f8fc;--ring:#005278;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  .skip-link{position:absolute;top:-100px;left:16px;z-index:9999;background:var(--accent);color:var(--bg);font-family:var(--mono);font-size:.85rem;font-weight:700;padding:10px 18px;border-radius:0 0 6px 6px;text-decoration:none;letter-spacing:.08em;transition:top .2s}
+  .skip-link:focus{top:0;outline:3px solid var(--ring);outline-offset:2px}
+  :focus-visible{outline:2px solid var(--ring);outline-offset:3px;border-radius:3px}
+  :focus:not(:focus-visible){outline:none}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:0 16px 60px;
+    background-image:radial-gradient(ellipse 80% 40% at 50% -10%,var(--radial) 0%,transparent 70%),repeating-linear-gradient(0deg,transparent,transparent 39px,var(--grid-a) 40px),repeating-linear-gradient(90deg,transparent,transparent 39px,var(--grid-b) 40px);
+    transition:background .3s,color .3s}
+  header{width:100%;max-width:960px;padding:32px 0 24px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--border);margin-bottom:32px;transition:border-color .3s}
+  .logo-onion{width:42px;height:42px;flex-shrink:0}
+  .logo-onion .ring{fill:none;stroke:var(--accent);stroke-width:1.5;transition:stroke .3s}
+  .logo-onion .core{fill:var(--accent);opacity:.9;transition:fill .3s}
+  .header-text h1{font-family:var(--mono);font-size:1.05rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);transition:color .3s}
+  .header-text p{font-size:.68rem;color:var(--text-dim);letter-spacing:.07em;text-transform:uppercase;margin-top:3px;transition:color .3s}
+  .header-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .theme-toggle{display:flex;align-items:center;gap:7px;cursor:pointer;border:1px solid var(--border);background:transparent;border-radius:20px;padding:5px 11px 5px 8px;transition:border-color .2s,background .2s,color .2s;color:var(--text-dim)}
+  .theme-toggle:hover,.theme-toggle:focus-visible{border-color:var(--accent2);background:var(--accent-dim);color:var(--accent)}
+  .theme-icon{font-size:.85rem;line-height:1;transition:transform .4s}
+  .theme-toggle:hover .theme-icon{transform:rotate(20deg)}
+  .theme-track{width:28px;height:15px;background:var(--border);border-radius:8px;position:relative;flex-shrink:0;transition:background .3s}
+  .theme-thumb{position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--text-dim);transition:transform .3s,background .3s}
+  [data-theme="light"] .theme-track{background:var(--accent2)}
+  [data-theme="light"] .theme-thumb{background:#fff;transform:translateX(13px)}
+  .theme-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+  .lang-wrap{position:relative;display:flex;align-items:center}
+  .lang-sel{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;padding:5px 26px 5px 10px;cursor:pointer;outline:none;transition:border-color .2s,background .2s,color .2s}
+  .lang-sel:hover,.lang-sel:focus-visible{border-color:var(--accent2);background:var(--accent-dim);color:var(--accent);outline:2px solid var(--ring);outline-offset:2px}
+  .lang-sel option{background:var(--sel-bg);color:var(--text)}
+  .lang-arr{position:absolute;right:8px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--text-dim);font-size:.55rem}
+  main{width:100%;max-width:960px}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:20px;transition:background .3s,border-color .3s}
+  .panel-head{padding:10px 18px;background:var(--panel-tint);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.66rem;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);transition:background .3s,border-color .3s,color .3s}
+  .panel-head::before{content:'';display:inline-block;width:3px;height:12px;background:var(--accent);border-radius:2px;flex-shrink:0;transition:background .3s}
+  .panel-body{padding:20px 22px}
+  .form-group{display:flex;flex-direction:column;gap:6px}
+  label{font-family:var(--mono);font-size:.63rem;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--text-dim);cursor:pointer}
+  input,textarea{background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:.85rem;padding:9px 12px;outline:none;width:100%;transition:border-color .2s,box-shadow .2s,background .3s,color .3s;min-height:44px}
+  input:focus-visible,textarea:focus-visible{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(0,212,255,.20);outline:none}
+  input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:var(--err);box-shadow:0 0 0 2px rgba(255,78,106,.2)}
+  input::placeholder,textarea::placeholder{color:var(--text-dim)}
+  textarea{resize:vertical;min-height:100px;line-height:1.6}
+  .ip-tabs{display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px;width:fit-content;transition:border-color .3s}
+  .ip-tab{padding:7px 15px;font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border:none;background:transparent;color:var(--text-dim);transition:all .18s;user-select:none;min-height:44px}
+  .ip-tab[aria-selected="true"]{background:var(--accent-dim);color:var(--accent)}
+  .ip-tab:hover:not([aria-selected="true"]){background:var(--panel-tint);color:var(--text-mid)}
+  .ip-tab:focus-visible{outline:2px solid var(--ring);outline-offset:-2px;z-index:1}
+  .ip-pane{display:none}.ip-pane.active{display:block}
+  .ip-hint{margin-top:6px;font-family:var(--mono);font-size:.63rem;color:var(--text-dim)}
+  .submit-row{margin-top:22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .btn-submit{display:flex;align-items:center;gap:9px;background:var(--accent-dim);border:1px solid var(--accent2);color:var(--accent);font-family:var(--mono);font-size:.78rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;padding:10px 26px;border-radius:4px;cursor:pointer;position:relative;overflow:hidden;transition:background .2s,box-shadow .2s,border-color .3s,color .3s;min-height:44px}
+  .btn-submit::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(0,212,255,.12),transparent);transform:translateX(-100%);transition:transform .4s}
+  .btn-submit:hover::before{transform:translateX(100%)}
+  .btn-submit:hover{box-shadow:0 0 20px rgba(0,144,204,.25);filter:brightness(1.08)}
+  .btn-submit:active{transform:scale(.98)}.btn-submit:disabled{opacity:.4;cursor:not-allowed}
+  .btn-submit:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
+  .spinner{display:none;width:16px;height:16px;border:2px solid rgba(0,212,255,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+  .loading .spinner{display:block}.loading .send-icon{display:none}
+  .query-hint{font-family:var(--mono);font-size:.67rem;color:var(--text-dim)}
+  #results-panel{display:none}
+  .result-meta{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .badge{font-family:var(--mono);font-size:.63rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:3px 10px;border-radius:3px}
+  .badge-tor{background:var(--tor-dim);color:var(--tor);border:1px solid var(--tor)}
+  .badge-notor{background:var(--notor-dim);color:var(--notor);border:1px solid var(--notor)}
+  .badge-error{background:var(--err-dim);color:var(--err);border:1px solid var(--err)}
+  .result-query-str{font-family:var(--mono);font-size:.72rem;color:var(--text-mid)}
+  .result-time{margin-left:auto;font-family:var(--mono);font-size:.67rem;color:var(--text-dim)}
+  .btn-copy{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);font-family:var(--mono);font-size:.63rem;font-weight:500;letter-spacing:.1em;text-transform:uppercase;padding:4px 11px;cursor:pointer;white-space:nowrap;transition:border-color .2s,background .2s,color .2s;min-height:28px}
+  .btn-copy:hover{border-color:var(--accent2);background:var(--accent-dim);color:var(--accent)}
+  .btn-copy.copied{border-color:var(--ok);color:var(--ok);background:var(--ok-dim)}
+  .tor-table-wrap{overflow-x:auto}
+  .tor-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.8rem}
+  .tor-table thead tr{border-bottom:1px solid var(--border-hi)}
+  .tor-table th{text-align:left;padding:6px 12px 8px;font-size:.6rem;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);white-space:nowrap}
+  .tor-table td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;transition:background .15s}
+  .tor-table tr:last-child td{border-bottom:none}
+  .tor-table tr:hover td{background:var(--panel-tint)}
+  .td-ip{font-weight:600;color:var(--accent);white-space:nowrap}
+  .td-ip.notor{color:var(--notor)}
+  .node-pill{display:inline-block;padding:2px 8px;border-radius:3px;font-size:.65rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+  .node-guard{background:rgba(0,180,130,.15);color:#00d48a;border:1px solid rgba(0,212,138,.3)}
+  .node-exit{background:rgba(255,78,106,.12);color:#ff6e88;border:1px solid rgba(255,78,106,.3)}
+  .node-guard_and_exit{background:rgba(255,179,64,.12);color:#ffb340;border:1px solid rgba(255,179,64,.3)}
+  .node-middle{background:rgba(0,160,200,.12);color:#40c0e0;border:1px solid rgba(0,180,220,.3)}
+  .node-authority{background:rgba(255,220,50,.12);color:#ffd832;border:1px solid rgba(255,220,50,.3)}
+  .flags-wrap{display:flex;flex-wrap:wrap;gap:4px;max-width:240px}
+  .flag-chip{font-size:.58rem;padding:1px 6px;border-radius:2px;background:var(--panel-tint);border:1px solid var(--border);color:var(--text-mid);white-space:nowrap}
+  .flag-chip.flag-Guard{border-color:rgba(0,212,138,.4);color:#00d48a}
+  .flag-chip.flag-Exit{border-color:rgba(255,78,106,.4);color:#ff6e88}
+  .flag-chip.flag-Authority{border-color:rgba(255,220,50,.4);color:#ffd832}
+  .flag-chip.flag-HSDir{border-color:rgba(0,212,255,.4);color:#00d4ff}
+  .flag-chip.flag-Fast{border-color:rgba(0,180,255,.3);color:#60ccff}
+  .flag-chip.flag-Stable{border-color:rgba(0,220,180,.3);color:#00dcb4}
+  .cell-main{display:block}.cell-sub{display:block;margin-top:2px;font-size:.66rem;color:var(--text-dim)}
+  .cell-main.accent{color:var(--accent)}.cell-main.muted{color:var(--text-mid)}
+  .td-notor-msg{color:var(--notor);font-size:.75rem;opacity:.8}
+  .fp-short{font-size:.66rem;color:var(--text-dim);letter-spacing:.04em}
+  .raw-block{background:var(--raw-bg);border:1px solid var(--border);border-radius:4px;padding:14px 16px;font-family:var(--mono);font-size:.78rem;color:var(--text-mid);white-space:pre-wrap;word-break:break-all;line-height:1.7}
+  .stats-bar{display:flex;gap:20px;padding:12px 22px;flex-wrap:wrap;border-top:1px solid var(--border);font-family:var(--mono);font-size:.68rem;color:var(--text-dim);background:var(--panel-tint)}
+  .stat-item{display:flex;align-items:center;gap:6px}
+  .stat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .stat-dot.guard{background:#00d48a}.stat-dot.exit{background:#ff6e88}
+  .stat-dot.middle{background:#40c0e0}.stat-dot.authority{background:#ffd832}
+  .stat-dot.notor{background:var(--notor)}
+  .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+  footer{margin-top:48px;font-family:var(--mono);font-size:.6rem;color:var(--text-dim);letter-spacing:.08em;text-align:center;opacity:.45}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  @media(max-width:600px){.theme-label{display:none}.flags-wrap{max-width:160px}}
+
+  /* ── RTL support ── */
+  [dir="rtl"] .header-right{margin-left:0;margin-right:auto}
+  [dir="rtl"] .lang-arr{right:auto;left:8px}
+  [dir="rtl"] .lang-sel{padding:5px 10px 5px 26px}
+  [dir="rtl"] .result-time{margin-left:0;margin-right:auto}
+  [dir="rtl"] .panel-head::before{margin-right:0;margin-left:10px}
+  [dir="rtl"] .tor-table th,[dir="rtl"] .tor-table td{text-align:right}
+  [dir="rtl"] .skip-link{left:auto;right:16px}
+  [dir="rtl"] .btn-submit::before{background:linear-gradient(270deg,transparent,rgba(0,212,255,.10),transparent)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content" id="skip-link">Skip to main content</a>
+<header role="banner">
+  <svg class="logo-onion" viewBox="0 0 42 42" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <ellipse class="ring" cx="21" cy="21" rx="19" ry="19"/>
+    <ellipse class="ring" cx="21" cy="21" rx="13" ry="15"/>
+    <ellipse class="ring" cx="21" cy="21" rx="7" ry="10"/>
+    <circle  class="core" cx="21" cy="21" r="4"/>
+  </svg>
+  <div class="header-text">
+    <h1>http2tor</h1>
+    <p id="hdr-subtitle">Cyber Threat Intelligence · Tor Network Detection</p>
+  </div>
+  <div class="header-right">
+    <div class="lang-wrap">
+      <label for="lang-sel" class="visually-hidden" id="lang-sel-lbl">Language</label>
+      <select class="lang-sel" id="lang-sel" aria-labelledby="lang-sel-lbl" title="Language">
+        <option value="ar">AR</option>
+        <option value="bn">BN</option>
+        <option value="de">DE</option>
+        <option value="en">EN</option>
+        <option value="es">ES</option>
+        <option value="fr">FR</option>
+        <option value="hi">HI</option>
+        <option value="id">ID</option>
+        <option value="ja">JA</option>
+        <option value="ko">KO</option>
+        <option value="pt-BR">PT</option>
+        <option value="ru">RU</option>
+        <option value="ur">UR</option>
+        <option value="vi">VI</option>
+        <option value="zh-CN">ZH</option>
+      </select>
+      <span class="lang-arr" aria-hidden="true">▾</span>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" role="switch" aria-checked="false" aria-label="Toggle color theme">
+      <span class="theme-icon" id="theme-icon" aria-hidden="true">☀️</span>
+      <div class="theme-track" aria-hidden="true"><div class="theme-thumb"></div></div>
+      <span class="theme-label" id="theme-label"></span>
+    </button>
+  </div>
+</header>
+<main id="main-content" role="main">
+  <div id="sr-status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;"></div>
+  <section class="panel" aria-labelledby="ph-params">
+    <div class="panel-head" id="ph-params" role="heading" aria-level="2"></div>
+    <div class="panel-body">
+      <form id="tor-form" novalidate>
+        <div class="form-group">
+          <label id="lbl-ip-mode"></label>
+          <div class="ip-tabs" role="tablist" aria-labelledby="lbl-ip-mode">
+            <button class="ip-tab" role="tab" id="tab-single" data-tab="single" aria-selected="true" aria-controls="pane-single" tabindex="0"></button>
+            <button class="ip-tab" role="tab" id="tab-multi"  data-tab="multi"  aria-selected="false" aria-controls="pane-multi" tabindex="-1"></button>
+          </div>
+          <div class="ip-pane active" id="pane-single" role="tabpanel" aria-labelledby="tab-single" tabindex="0">
+            <input type="text" id="ip-single" autocomplete="off" spellcheck="false" aria-labelledby="lbl-ip-mode" aria-describedby="ip-single-hint" aria-required="true" aria-invalid="false">
+            <div class="ip-hint" id="ip-single-hint"></div>
+          </div>
+          <div class="ip-pane" id="pane-multi" role="tabpanel" aria-labelledby="tab-multi" tabindex="0" hidden>
+            <textarea id="ip-multi" autocomplete="off" spellcheck="false" rows="5" aria-labelledby="lbl-ip-mode" aria-describedby="ip-multi-hint" aria-required="true" aria-invalid="false"></textarea>
+            <div class="ip-hint" id="ip-multi-hint"></div>
+          </div>
+        </div>
+        <div class="submit-row">
+          <button class="btn-submit" id="btn-query" type="submit">
+            <svg class="send-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 2L4 6v6c0 5.5 3.5 10.7 8 12 4.5-1.3 8-6.5 8-12V6L12 2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <div class="spinner" aria-hidden="true"></div>
+            <span id="btn-send-label"></span>
+          </button>
+          <span class="query-hint" id="query-hint" aria-live="assertive" role="status"></span>
+        </div>
+      </form>
+    </div>
+  </section>
+  <section class="panel" id="results-panel" aria-labelledby="ph-results" aria-live="polite">
+    <div class="panel-head" id="ph-results" role="heading" aria-level="2"></div>
+    <div class="panel-body" id="results-body"></div>
+    <div class="stats-bar" id="stats-bar" style="display:none"></div>
+  </section>
+</main>
+<footer role="contentinfo">HTTP2TOR · TOR NETWORK DETECTION · v1.0</footer>
+<script>
+// ══════════════════════════════════════════════════════════
+// I18N — 15 LANGUAGES
+// ══════════════════════════════════════════════════════════
+const LANGS={
+ar:{subtitle:'استخبارات التهديدات الإلكترونية · كشف شبكة Tor',themeLight:'فاتح',themeDark:'داكن',panelParams:'معاملات الاستعلام',labelIpMode:'عنوان (عناوين) IP',tabSingle:'عنوان واحد',tabMulti:'عناوين متعددة',placeholderSingle:'مثال: 185.220.101.1 أو 2a0b:f4c2::1',placeholderMulti:'مثال:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 و IPv6 مقبولان',hintMulti:'عنوان IP واحد لكل سطر أو مفصولة بفاصلة أو مسافة · IPv4 و IPv6 مقبولان',btnSend:'فحص Tor',panelResults:'النتائج',colStatus:'الحالة',colNodeType:'نوع العقدة',colFlags:'العلامات',colNickname:'المرحّل',colCountry:'الدولة / AS',colSeen:'نشط منذ',colWeight:'الوزن',labelTor:'TOR',labelNotTor:'ليس TOR',notTorMsg:'هذه ليست عقدة في شبكة Tor.',errBadge:'خطأ',warnNoIp:'⚠ أدخل عنوان IP',loadingLabel:'جارٍ فحص عقد Tor…',replyCount:n=>`${n} نتيجة`,resultsReady:n=>`اكتمل الفحص، ${n} نتيجة.`,btnCopy:'نسخ CSV',btnCopied:'✓ تم النسخ',statGuard:'حارس',statExit:'خروج',statMiddle:'وسيط',statAuthority:'سلطة',statNotTor:'غير Tor',dir:'rtl',skipLink:'انتقل إلى المحتوى الرئيسي'},
+bn:{subtitle:'সাইবার হুমকি গোয়েন্দা · Tor নেটওয়ার্ক সনাক্তকরণ',themeLight:'হালকা',themeDark:'গাঢ়',panelParams:'কোয়েরি প্যারামিটার',labelIpMode:'IP ঠিকানা',tabSingle:'একক',tabMulti:'একাধিক',placeholderSingle:'যেমন: 185.220.101.1 বা 2a0b:f4c2::1',placeholderMulti:'যেমন:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 ও IPv6 গৃহীত',hintMulti:'প্রতি লাইনে একটি IP বা কমা/স্পেস দিয়ে আলাদা · IPv4 ও IPv6 গৃহীত',btnSend:'Tor পরীক্ষা করুন',panelResults:'ফলাফল',colStatus:'অবস্থা',colNodeType:'নোডের ধরন',colFlags:'ফ্ল্যাগ',colNickname:'রিলে',colCountry:'দেশ / AS',colSeen:'সক্রিয় থেকে',colWeight:'ওজন',labelTor:'TOR',labelNotTor:'TOR নয়',notTorMsg:'এটি Tor নেটওয়ার্কের নোড নয়।',errBadge:'ত্রুটি',warnNoIp:'⚠ একটি IP ঠিকানা লিখুন',loadingLabel:'Tor নোড পরীক্ষা হচ্ছে…',replyCount:n=>`${n}টি ফলাফল`,resultsReady:n=>`পরীক্ষা সম্পন্ন, ${n}টি ফলাফল।`,btnCopy:'CSV কপি',btnCopied:'✓ কপি হয়েছে',statGuard:'গার্ড',statExit:'এক্সিট',statMiddle:'মধ্যবর্তী',statAuthority:'কর্তৃপক্ষ',statNotTor:'Tor নয়',dir:'ltr',skipLink:'মূল বিষয়বস্তুতে যান'},
+de:{subtitle:'Cyber Threat Intelligence · Tor-Netzwerk Erkennung',themeLight:'Hell',themeDark:'Dunkel',panelParams:'Anfrageparameter',labelIpMode:'IP-Adresse(n)',tabSingle:'Einzeln',tabMulti:'Mehrfach',placeholderSingle:'z.B.: 185.220.101.1 oder 2a0b:f4c2::1',placeholderMulti:'z.B.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 und IPv6 werden akzeptiert',hintMulti:'Eine IP pro Zeile oder durch Komma/Leerzeichen getrennt · IPv4 und IPv6 akzeptiert',btnSend:'Tor prüfen',panelResults:'Ergebnisse',colStatus:'Status',colNodeType:'Knotentyp',colFlags:'Flags',colNickname:'Relay',colCountry:'Land / AS',colSeen:'Aktiv seit',colWeight:'Gewicht',labelTor:'TOR',labelNotTor:'KEIN TOR',notTorMsg:'Kein Tor-Netzwerkknoten.',errBadge:'FEHLER',warnNoIp:'⚠ IP-Adresse eingeben',loadingLabel:'Tor-Knoten werden geprüft…',replyCount:n=>`${n} Ergebnis(se)`,resultsReady:n=>`Prüfung abgeschlossen, ${n} Ergebnis(se).`,btnCopy:'CSV kopieren',btnCopied:'✓ Kopiert',statGuard:'Guard',statExit:'Exit',statMiddle:'Mittel',statAuthority:'Autorität',statNotTor:'Kein Tor',dir:'ltr',skipLink:'Zum Hauptinhalt'},
+en:{subtitle:'Cyber Threat Intelligence · Tor Network Detection',themeLight:'Light',themeDark:'Dark',panelParams:'Query Parameters',labelIpMode:'IP Address(es)',tabSingle:'Single',tabMulti:'Multiple',placeholderSingle:'e.g.: 185.220.101.1 or 2a0b:f4c2::1',placeholderMulti:'e.g.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 and IPv6 accepted',hintMulti:'One IP per line, or comma/space separated · IPv4 and IPv6 accepted',btnSend:'Check Tor',panelResults:'Results',colStatus:'Status',colNodeType:'Node Type',colFlags:'Flags',colNickname:'Relay',colCountry:'Country / AS',colSeen:'Active Since',colWeight:'Weight',labelTor:'TOR',labelNotTor:'NOT TOR',notTorMsg:'Not a Tor network node.',errBadge:'ERROR',warnNoIp:'⚠ Enter an IP address',loadingLabel:'Checking Tor nodes…',replyCount:n=>`${n} result(s)`,resultsReady:n=>`Check complete, ${n} result(s).`,btnCopy:'Copy CSV',btnCopied:'✓ Copied',statGuard:'Guard',statExit:'Exit',statMiddle:'Middle',statAuthority:'Authority',statNotTor:'Not Tor',dir:'ltr',skipLink:'Skip to main content'},
+es:{subtitle:'Inteligencia de Amenazas · Detección de Red Tor',themeLight:'Claro',themeDark:'Oscuro',panelParams:'Parámetros de Consulta',labelIpMode:'Dirección(es) IP',tabSingle:'Individual',tabMulti:'Múltiple',placeholderSingle:'ej.: 185.220.101.1 o 2a0b:f4c2::1',placeholderMulti:'ej.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 e IPv6 aceptados',hintMulti:'Una IP por línea o separadas por coma/espacio · IPv4 e IPv6 aceptados',btnSend:'Verificar Tor',panelResults:'Resultados',colStatus:'Estado',colNodeType:'Tipo de nodo',colFlags:'Flags',colNickname:'Relay',colCountry:'País / AS',colSeen:'Activo desde',colWeight:'Peso',labelTor:'TOR',labelNotTor:'NO TOR',notTorMsg:'No pertenece a la red Tor.',errBadge:'ERROR',warnNoIp:'⚠ Introduce una dirección IP',loadingLabel:'Verificando nodos Tor…',replyCount:n=>`${n} resultado(s)`,resultsReady:n=>`Verificación completada, ${n} resultado(s).`,btnCopy:'Copiar CSV',btnCopied:'✓ Copiado',statGuard:'Guardia',statExit:'Salida',statMiddle:'Intermedio',statAuthority:'Autoridad',statNotTor:'No Tor',dir:'ltr',skipLink:'Saltar al contenido'},
+fr:{subtitle:'Cyber Threat Intelligence · Détection du Réseau Tor',themeLight:'Clair',themeDark:'Sombre',panelParams:'Paramètres de la requête',labelIpMode:'Adresse(s) IP',tabSingle:'Unique',tabMulti:'Multiple',placeholderSingle:'ex: 185.220.101.1 ou 2a0b:f4c2::1',placeholderMulti:'ex:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 et IPv6 acceptés',hintMulti:'Une IP par ligne, ou séparées par virgule/espace · IPv4 et IPv6 acceptés',btnSend:'Vérifier Tor',panelResults:'Résultats',colStatus:'Statut',colNodeType:'Type de nœud',colFlags:'Drapeaux',colNickname:'Relais',colCountry:'Pays / AS',colSeen:'Actif depuis',colWeight:'Poids',labelTor:'TOR',labelNotTor:'PAS TOR',notTorMsg:"Cette IP n'appartient pas au réseau Tor.",errBadge:'ERREUR',warnNoIp:'⚠ Entrez une adresse IP',loadingLabel:'Vérification en cours…',replyCount:n=>`${n} résultat(s)`,resultsReady:n=>`Vérification terminée, ${n} résultat(s).`,btnCopy:'Copier CSV',btnCopied:'✓ Copié',statGuard:'Garde',statExit:'Sortie',statMiddle:'Intermédiaire',statAuthority:'Autorité',statNotTor:'Non-Tor',dir:'ltr',skipLink:'Aller au contenu principal'},
+hi:{subtitle:'साइबर खतरा खुफिया · Tor नेटवर्क पहचान',themeLight:'हल्का',themeDark:'गहरा',panelParams:'क्वेरी पैरामीटर',labelIpMode:'IP पते',tabSingle:'एकल',tabMulti:'एकाधिक',placeholderSingle:'उदा: 185.220.101.1 या 2a0b:f4c2::1',placeholderMulti:'उदा:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 और IPv6 स्वीकृत',hintMulti:'प्रति पंक्ति एक IP या कॉमा/स्पेस से अलग करें · IPv4 और IPv6 स्वीकृत',btnSend:'Tor जाँचें',panelResults:'परिणाम',colStatus:'स्थिति',colNodeType:'नोड प्रकार',colFlags:'फ्लैग',colNickname:'रिले',colCountry:'देश / AS',colSeen:'से सक्रिय',colWeight:'वज़न',labelTor:'TOR',labelNotTor:'TOR नहीं',notTorMsg:'यह Tor नेटवर्क का नोड नहीं है।',errBadge:'त्रुटि',warnNoIp:'⚠ IP पता दर्ज करें',loadingLabel:'Tor नोड जाँचे जा रहे हैं…',replyCount:n=>`${n} परिणाम`,resultsReady:n=>`जाँच पूर्ण, ${n} परिणाम।`,btnCopy:'CSV कॉपी',btnCopied:'✓ कॉपी हो गया',statGuard:'गार्ड',statExit:'एक्ज़िट',statMiddle:'मध्य',statAuthority:'प्राधिकरण',statNotTor:'Tor नहीं',dir:'ltr',skipLink:'मुख्य सामग्री पर जाएं'},
+id:{subtitle:'Intelijen Ancaman Siber · Deteksi Jaringan Tor',themeLight:'Terang',themeDark:'Gelap',panelParams:'Parameter Kueri',labelIpMode:'Alamat IP',tabSingle:'Tunggal',tabMulti:'Beberapa',placeholderSingle:'mis.: 185.220.101.1 atau 2a0b:f4c2::1',placeholderMulti:'mis.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 dan IPv6 diterima',hintMulti:'Satu IP per baris atau pisahkan dengan koma/spasi · IPv4 dan IPv6 diterima',btnSend:'Cek Tor',panelResults:'Hasil',colStatus:'Status',colNodeType:'Tipe Node',colFlags:'Flag',colNickname:'Relay',colCountry:'Negara / AS',colSeen:'Aktif Sejak',colWeight:'Bobot',labelTor:'TOR',labelNotTor:'BUKAN TOR',notTorMsg:'Bukan node jaringan Tor.',errBadge:'KESALAHAN',warnNoIp:'⚠ Masukkan alamat IP',loadingLabel:'Memeriksa node Tor…',replyCount:n=>`${n} hasil`,resultsReady:n=>`Pemeriksaan selesai, ${n} hasil.`,btnCopy:'Salin CSV',btnCopied:'✓ Disalin',statGuard:'Guard',statExit:'Exit',statMiddle:'Tengah',statAuthority:'Otoritas',statNotTor:'Bukan Tor',dir:'ltr',skipLink:'Lewati ke konten utama'},
+ja:{subtitle:'サイバー脅威インテリジェンス · Tor ネットワーク検出',themeLight:'ライト',themeDark:'ダーク',panelParams:'クエリパラメータ',labelIpMode:'IPアドレス',tabSingle:'単一',tabMulti:'複数',placeholderSingle:'例: 185.220.101.1 または 2a0b:f4c2::1',placeholderMulti:'例:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4・IPv6 対応',hintMulti:'1行に1つのIP またはカンマ/スペース区切り · IPv4・IPv6 対応',btnSend:'Tor を確認',panelResults:'結果',colStatus:'ステータス',colNodeType:'ノードタイプ',colFlags:'フラグ',colNickname:'リレー',colCountry:'国 / AS',colSeen:'稼働開始',colWeight:'ウェイト',labelTor:'TOR',labelNotTor:'TOR非該当',notTorMsg:'Tor ネットワークのノードではありません。',errBadge:'エラー',warnNoIp:'⚠ IPアドレスを入力してください',loadingLabel:'Tor ノードを確認中…',replyCount:n=>`${n} 件の結果`,resultsReady:n=>`確認完了、${n} 件の結果。`,btnCopy:'CSV コピー',btnCopied:'✓ コピー済み',statGuard:'ガード',statExit:'出口',statMiddle:'中間',statAuthority:'認証局',statNotTor:'非 Tor',dir:'ltr',skipLink:'メインコンテンツへ'},
+ko:{subtitle:'사이버 위협 인텔리전스 · Tor 네트워크 탐지',themeLight:'라이트',themeDark:'다크',panelParams:'쿼리 매개변수',labelIpMode:'IP 주소',tabSingle:'단일',tabMulti:'다중',placeholderSingle:'예: 185.220.101.1 또는 2a0b:f4c2::1',placeholderMulti:'예:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 및 IPv6 허용',hintMulti:'줄당 IP 하나 또는 쉼표/공백으로 구분 · IPv4 및 IPv6 허용',btnSend:'Tor 확인',panelResults:'결과',colStatus:'상태',colNodeType:'노드 유형',colFlags:'플래그',colNickname:'릴레이',colCountry:'국가 / AS',colSeen:'활성 이후',colWeight:'가중치',labelTor:'TOR',labelNotTor:'TOR 아님',notTorMsg:'Tor 네트워크 노드가 아닙니다.',errBadge:'오류',warnNoIp:'⚠ IP 주소를 입력하세요',loadingLabel:'Tor 노드 확인 중…',replyCount:n=>`${n}개 결과`,resultsReady:n=>`확인 완료, ${n}개 결과.`,btnCopy:'CSV 복사',btnCopied:'✓ 복사됨',statGuard:'가드',statExit:'출구',statMiddle:'중간',statAuthority:'권위',statNotTor:'Tor 아님',dir:'ltr',skipLink:'본문으로 건너뛰기'},
+'pt-BR':{subtitle:'Inteligência de Ameaças · Detecção de Rede Tor',themeLight:'Claro',themeDark:'Escuro',panelParams:'Parâmetros da Consulta',labelIpMode:'Endereço(s) IP',tabSingle:'Único',tabMulti:'Múltiplo',placeholderSingle:'ex.: 185.220.101.1 ou 2a0b:f4c2::1',placeholderMulti:'ex.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 e IPv6 aceitos',hintMulti:'Um IP por linha ou separados por vírgula/espaço · IPv4 e IPv6 aceitos',btnSend:'Verificar Tor',panelResults:'Resultados',colStatus:'Status',colNodeType:'Tipo de nó',colFlags:'Flags',colNickname:'Relay',colCountry:'País / AS',colSeen:'Ativo desde',colWeight:'Peso',labelTor:'TOR',labelNotTor:'NÃO TOR',notTorMsg:'Não é um nó da rede Tor.',errBadge:'ERRO',warnNoIp:'⚠ Informe um endereço IP',loadingLabel:'Verificando nós Tor…',replyCount:n=>`${n} resultado(s)`,resultsReady:n=>`Verificação concluída, ${n} resultado(s).`,btnCopy:'Copiar CSV',btnCopied:'✓ Copiado',statGuard:'Guarda',statExit:'Saída',statMiddle:'Intermediário',statAuthority:'Autoridade',statNotTor:'Não-Tor',dir:'ltr',skipLink:'Pular para o conteúdo'},
+ru:{subtitle:'Киберразведка · Обнаружение сети Tor',themeLight:'Светлая',themeDark:'Тёмная',panelParams:'Параметры запроса',labelIpMode:'IP-адреса',tabSingle:'Одиночный',tabMulti:'Множественный',placeholderSingle:'напр.: 185.220.101.1 или 2a0b:f4c2::1',placeholderMulti:'напр.:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 и IPv6 поддерживаются',hintMulti:'Один IP на строку или через запятую/пробел · IPv4 и IPv6 поддерживаются',btnSend:'Проверить Tor',panelResults:'Результаты',colStatus:'Статус',colNodeType:'Тип узла',colFlags:'Флаги',colNickname:'Ретранслятор',colCountry:'Страна / AS',colSeen:'Активен с',colWeight:'Вес',labelTor:'TOR',labelNotTor:'НЕ TOR',notTorMsg:'Не является узлом сети Tor.',errBadge:'ОШИБКА',warnNoIp:'⚠ Введите IP-адрес',loadingLabel:'Проверка узлов Tor…',replyCount:n=>`${n} результат(ов)`,resultsReady:n=>`Проверка завершена, ${n} результат(ов).`,btnCopy:'Копировать CSV',btnCopied:'✓ Скопировано',statGuard:'Охрана',statExit:'Выход',statMiddle:'Промежуточный',statAuthority:'Авторитет',statNotTor:'Не Tor',dir:'ltr',skipLink:'К основному содержимому'},
+ur:{subtitle:'سائبر خطرہ انٹیلیجنس · Tor نیٹ ورک کی شناخت',themeLight:'روشن',themeDark:'تاریک',panelParams:'کوئری پیرامیٹرز',labelIpMode:'IP ایڈریس',tabSingle:'واحد',tabMulti:'متعدد',placeholderSingle:'مثلاً: 185.220.101.1 یا 2a0b:f4c2::1',placeholderMulti:'مثلاً:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'IPv4 اور IPv6 قابلِ قبول',hintMulti:'ہر لائن پر ایک IP یا کاما/اسپیس سے الگ کریں · IPv4 اور IPv6 قابلِ قبول',btnSend:'Tor جانچیں',panelResults:'نتائج',colStatus:'حالت',colNodeType:'نوڈ کی قسم',colFlags:'فلیگ',colNickname:'ریلے',colCountry:'ملک / AS',colSeen:'فعال ہونے سے',colWeight:'وزن',labelTor:'TOR',labelNotTor:'TOR نہیں',notTorMsg:'یہ Tor نیٹ ورک کا نوڈ نہیں ہے۔',errBadge:'خطا',warnNoIp:'⚠ IP ایڈریس درج کریں',loadingLabel:'Tor نوڈز جانچے جا رہے ہیں…',replyCount:n=>`${n} نتائج`,resultsReady:n=>`جانچ مکمل، ${n} نتائج۔`,btnCopy:'CSV کاپی',btnCopied:'✓ کاپی ہوگئی',statGuard:'گارڈ',statExit:'ایگزٹ',statMiddle:'درمیانی',statAuthority:'اتھارٹی',statNotTor:'Tor نہیں',dir:'rtl',skipLink:'مرکزی مواد پر جائیں'},
+vi:{subtitle:'Tình báo Mối đe dọa Mạng · Phát hiện Mạng Tor',themeLight:'Sáng',themeDark:'Tối',panelParams:'Tham số truy vấn',labelIpMode:'Địa chỉ IP',tabSingle:'Đơn lẻ',tabMulti:'Nhiều địa chỉ',placeholderSingle:'vd: 185.220.101.1 hoặc 2a0b:f4c2::1',placeholderMulti:'vd:\n185.220.101.1\n78.109.18.140\n...',hintSingle:'Chấp nhận IPv4 và IPv6',hintMulti:'Một IP mỗi dòng hoặc phân tách bằng dấu phẩy/khoảng trắng · IPv4 và IPv6 được chấp nhận',btnSend:'Kiểm tra Tor',panelResults:'Kết quả',colStatus:'Trạng thái',colNodeType:'Loại nút',colFlags:'Cờ',colNickname:'Relay',colCountry:'Quốc gia / AS',colSeen:'Hoạt động từ',colWeight:'Trọng số',labelTor:'TOR',labelNotTor:'KHÔNG PHẢI TOR',notTorMsg:'Không phải nút mạng Tor.',errBadge:'LỖI',warnNoIp:'⚠ Nhập địa chỉ IP',loadingLabel:'Đang kiểm tra nút Tor…',replyCount:n=>`${n} kết quả`,resultsReady:n=>`Kiểm tra hoàn tất, ${n} kết quả.`,btnCopy:'Sao chép CSV',btnCopied:'✓ Đã sao chép',statGuard:'Guard',statExit:'Exit',statMiddle:'Trung gian',statAuthority:'Thẩm quyền',statNotTor:'Không phải Tor',dir:'ltr',skipLink:'Chuyển đến nội dung chính'},
+'zh-CN':{subtitle:'网络威胁情报 · Tor 网络检测',themeLight:'浅色',themeDark:'深色',panelParams:'查询参数',labelIpMode:'IP 地址',tabSingle:'单个',tabMulti:'多个',placeholderSingle:'例：185.220.101.1 或 2a0b:f4c2::1',placeholderMulti:'例：\n185.220.101.1\n78.109.18.140\n...',hintSingle:'支持 IPv4 和 IPv6',hintMulti:'每行一个 IP，或用逗号/空格分隔 · 支持 IPv4 和 IPv6',btnSend:'检查 Tor',panelResults:'结果',colStatus:'状态',colNodeType:'节点类型',colFlags:'标志',colNickname:'中继',colCountry:'国家 / AS',colSeen:'活跃时间',colWeight:'权重',labelTor:'TOR',labelNotTor:'非 TOR',notTorMsg:'不是 Tor 网络节点。',errBadge:'错误',warnNoIp:'⚠ 请输入 IP 地址',loadingLabel:'正在检查 Tor 节点…',replyCount:n=>`${n} 条结果`,resultsReady:n=>`检查完成，${n} 条结果。`,btnCopy:'复制 CSV',btnCopied:'✓ 已复制',statGuard:'入口节点',statExit:'出口节点',statMiddle:'中间节点',statAuthority:'权威节点',statNotTor:'非 Tor',dir:'ltr',skipLink:'跳转到主要内容'}
+};
+
+const SUPPORTED=Object.keys(LANGS);
+function detectLang(){
+  for(const l of(navigator.languages||[navigator.language||'en'])){
+    if(SUPPORTED.includes(l))return l;
+    const b=l.split('-')[0];
+    const m=SUPPORTED.find(s=>s===b||s.startsWith(b+'-'));
+    if(m)return m;
+  }
+  return'en';
+}
+
+// ── THEME ──────────────────────────────────────────────────────────
+const html=document.documentElement;
+const themeBtn=document.getElementById('theme-toggle');
+const themeLbl=document.getElementById('theme-label');
+const themeIcon=document.getElementById('theme-icon');
+let currentLang='en',isDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+applyTheme(isDark);
+themeBtn.addEventListener('click',()=>{isDark=!isDark;applyTheme(isDark)});
+function applyTheme(dark){
+  html.dataset.theme=dark?'dark':'light';
+  themeBtn.setAttribute('aria-checked',dark?'false':'true');
+  const t=LANGS[currentLang]||LANGS.en;
+  themeLbl.textContent=dark?t.themeLight:t.themeDark;
+  themeIcon.textContent=dark?'☀️':'🌙';
+}
+
+// ── LANGUAGE ───────────────────────────────────────────────────────
+function applyLang(lang){
+  currentLang=lang;
+  const t=LANGS[lang]||LANGS.en;
+  const dir=t.dir||'ltr';
+  html.lang=lang;html.dir=dir;document.body.dir=dir;
+  document.getElementById('skip-link').textContent=t.skipLink||'Skip to main content';
+  document.getElementById('hdr-subtitle').textContent=t.subtitle;
+  document.getElementById('ph-params').textContent=t.panelParams;
+  document.getElementById('lbl-ip-mode').textContent=t.labelIpMode;
+  document.getElementById('tab-single').textContent=t.tabSingle;
+  document.getElementById('tab-multi').textContent=t.tabMulti;
+  document.getElementById('ip-single').placeholder=t.placeholderSingle;
+  document.getElementById('ip-multi').placeholder=t.placeholderMulti;
+  document.getElementById('ip-single-hint').textContent=t.hintSingle;
+  document.getElementById('ip-multi-hint').textContent=t.hintMulti;
+  document.getElementById('btn-send-label').textContent=t.btnSend;
+  document.getElementById('ph-results').textContent=t.panelResults;
+  // Update lang selector label for RTL languages
+  document.getElementById('lang-sel-lbl').textContent=dir==='rtl'?'اللغة':'Language';
+  applyTheme(isDark);
+}
+
+const langSel=document.getElementById('lang-sel');
+const initLang=detectLang();
+langSel.value=SUPPORTED.includes(initLang)?initLang:'en';
+applyLang(langSel.value);
+langSel.addEventListener('change',()=>applyLang(langSel.value));
+
+// ── TABS ───────────────────────────────────────────────────────────
+let activeTab='single';
+const ipTabs=Array.from(document.querySelectorAll('.ip-tab'));
+ipTabs.forEach(b=>{
+  b.addEventListener('click',()=>activateTab(b.dataset.tab,b));
+  b.addEventListener('keydown',e=>{
+    let i=ipTabs.indexOf(e.currentTarget);
+    const dir=html.dir==='rtl'?-1:1;
+    if(e.key==='ArrowRight'){e.preventDefault();ipTabs[(i+dir+ipTabs.length)%ipTabs.length].focus()}
+    if(e.key==='ArrowLeft'){e.preventDefault();ipTabs[(i-dir+ipTabs.length)%ipTabs.length].focus()}
+  });
+});
+function activateTab(id,btn){
+  activeTab=id;
+  ipTabs.forEach(b=>{b.setAttribute('aria-selected','false');b.tabIndex=-1});
+  document.querySelectorAll('.ip-pane').forEach(p=>{p.classList.remove('active');p.hidden=true});
+  btn.setAttribute('aria-selected','true');btn.tabIndex=0;
+  const p=document.getElementById('pane-'+id);p.classList.add('active');p.hidden=false;
+}
+function parseIPs(r){return r.split(/[\n,\s]+/).map(s=>s.trim()).filter(Boolean)}
+function getIPs(){
+  if(activeTab==='single'){const v=document.getElementById('ip-single').value.trim();return v?[v]:[]}
+  return parseIPs(document.getElementById('ip-multi').value);
+}
+
+// ── SUBMIT ─────────────────────────────────────────────────────────
+const torForm=document.getElementById('tor-form'),btn=document.getElementById('btn-query'),
+      hint=document.getElementById('query-hint'),srStatus=document.getElementById('sr-status');
+torForm.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const t=LANGS[currentLang]||LANGS.en;
+  const ips=getIPs();
+  const ai=activeTab==='single'?document.getElementById('ip-single'):document.getElementById('ip-multi');
+  if(!ips.length){ai.focus();ai.setAttribute('aria-invalid','true');hint.textContent=t.warnNoIp;hint.style.color='var(--warn)';hint.setAttribute('role','alert');return}
+  ai.setAttribute('aria-invalid','false');hint.textContent='';hint.removeAttribute('role');
+  const payload=ips.length===1?{ip:ips[0]}:{ips};
+  btn.disabled=true;btn.classList.add('loading');btn.setAttribute('aria-busy','true');srStatus.textContent=t.loadingLabel;
+  const t0=performance.now();
+  try{
+    const res=await fetch('/api/v1/istor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const elapsed=((performance.now()-t0)/1000).toFixed(2);
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    const data=await res.json();renderResults(data,ips,elapsed);srStatus.textContent=t.resultsReady(ips.length);
+  }catch(err){renderError(err,ips,((performance.now()-t0)/1000).toFixed(2));srStatus.textContent=String(err)}
+  finally{btn.disabled=false;btn.classList.remove('loading');btn.removeAttribute('aria-busy')}
+});
+document.getElementById('ip-single').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();torForm.requestSubmit()}});
+
+// ── RENDER ─────────────────────────────────────────────────────────
+let lastAnswers=[],lastIPs=[];
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function renderResults(data,ips,elapsed){
+  const panel=document.getElementById('results-panel'),body=document.getElementById('results-body'),stats=document.getElementById('stats-bar');
+  const t=LANGS[currentLang]||LANGS.en;panel.style.display='block';
+  if((data.status||'').toUpperCase()==='ERROR'){
+    lastAnswers=[];lastIPs=[];
+    body.innerHTML=`<div class="result-meta"><span class="badge badge-error">${t.errBadge}</span><span class="result-query-str">${esc(ips.join(', '))}</span><span class="result-time">${elapsed}s</span></div><div class="raw-block" role="alert" style="color:var(--err)">${esc(JSON.stringify(data,null,2))}</div>`;
+    stats.style.display='none';finalize(panel);return;
+  }
+  const ansMap={};(data.answers||[]).forEach(a=>{if(a.ip)ansMap[a.ip]=a});
+  lastIPs=ips;lastAnswers=ips.map(ip=>ansMap[ip]||null);
+  const torCount=(data.answers||[]).filter(a=>a.is_tor).length;
+  const qStr=ips.length===1?ips[0]:`${ips.length} IPs`;
+  const oBadge=torCount>0?`<span class="badge badge-tor">${t.labelTor}</span>`:`<span class="badge badge-notor">${t.labelNotTor}</span>`;
+  let rows='';ips.forEach(ip=>{const a=ansMap[ip];rows+=(a&&a.is_tor)?buildRow(a,t):buildNotFoundRow(ip,t)});
+  body.innerHTML=`<div class="result-meta">${oBadge}<span class="result-query-str">${esc(qStr)}</span><span class="result-time">${elapsed}s · ${t.replyCount(ips.length)}</span><button class="btn-copy" id="btn-csv" type="button"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span id="csv-label">${esc(t.btnCopy)}</span></button></div><div class="tor-table-wrap"><table class="tor-table" aria-label="${esc(t.panelResults)}"><caption class="visually-hidden">${esc(t.panelResults)}</caption><thead><tr><th>IP</th><th>${esc(t.colStatus)}</th><th>${esc(t.colNodeType)}</th><th>${esc(t.colNickname)}</th><th>${esc(t.colFlags)}</th><th>${esc(t.colCountry)}</th><th>${esc(t.colSeen)}</th><th>${esc(t.colWeight)}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.getElementById('btn-csv').addEventListener('click',copyCSV);
+  const c={guard:0,exit:0,middle:0,authority:0,notor:0};
+  (data.answers||[]).forEach(a=>{if(!a.is_tor){c.notor++;return}if(a.is_authority)c.authority++;else if(a.is_guard&&a.is_exit){c.guard++;c.exit++}else if(a.is_guard)c.guard++;else if(a.is_exit)c.exit++;else c.middle++});
+  const sp=[];
+  if(c.guard)sp.push(`<span class="stat-item"><span class="stat-dot guard"></span>${c.guard} ${esc(t.statGuard)}</span>`);
+  if(c.exit)sp.push(`<span class="stat-item"><span class="stat-dot exit"></span>${c.exit} ${esc(t.statExit)}</span>`);
+  if(c.middle)sp.push(`<span class="stat-item"><span class="stat-dot middle"></span>${c.middle} ${esc(t.statMiddle)}</span>`);
+  if(c.authority)sp.push(`<span class="stat-item"><span class="stat-dot authority"></span>${c.authority} ${esc(t.statAuthority)}</span>`);
+  if(c.notor)sp.push(`<span class="stat-item"><span class="stat-dot notor"></span>${c.notor} ${esc(t.statNotTor)}</span>`);
+  stats.innerHTML=sp.join('');stats.style.display=sp.length?'flex':'none';finalize(panel);
+}
+function nodeLabel(a){if(a.is_authority)return'authority';if(a.is_guard&&a.is_exit)return'guard_and_exit';if(a.is_guard)return'guard';if(a.is_exit)return'exit';return'middle'}
+function nodePill(a,t){
+  const k=nodeLabel(a);
+  const lbl={guard:t.statGuard||'Guard',exit:t.statExit||'Exit',guard_and_exit:'Guard + Exit',middle:t.statMiddle||'Middle',authority:t.statAuthority||'Authority'};
+  return`<span class="node-pill node-${k}">${esc(lbl[k]||k)}</span>`;
+}
+function buildRow(a,t){
+  const flags=(a.flags||[]).map(f=>`<span class="flag-chip flag-${esc(f)}">${esc(f)}</span>`).join('');
+  const fp=a.fingerprint?`<span class="fp-short">${esc(a.fingerprint.slice(0,10))}…</span>`:'';
+  const country=a.country?`<span class="cell-main accent">${esc(a.country.toUpperCase())}</span>`:'';
+  const asInfo=a.as_name?`<span class="cell-sub">${esc(a.as||'')} ${esc(a.as_name)}</span>`:'';
+  const seen=a.first_seen?`<span class="cell-main muted">${esc(a.first_seen.slice(0,10))}</span>`:'—';
+  const w=a.consensus_weight!=null?`<span class="cell-main muted">${Number(a.consensus_weight).toLocaleString()}</span>`:'—';
+  return`<tr><td class="td-ip">${esc(a.ip)}</td><td><span class="badge badge-tor">${t.labelTor}</span></td><td>${nodePill(a,t)}</td><td><span class="cell-main accent">${esc(a.nickname||'—')}</span>${fp}</td><td><div class="flags-wrap">${flags||'—'}</div></td><td>${country}${asInfo}</td><td>${seen}</td><td>${w}</td></tr>`;
+}
+function buildNotFoundRow(ip,t){
+  return`<tr><td class="td-ip notor">${esc(ip)}</td><td><span class="badge badge-notor">${t.labelNotTor}</span></td><td colspan="6" class="td-notor-msg">⊘ &nbsp;${esc(t.notTorMsg)}</td></tr>`;
+}
+function renderError(err,ips,elapsed){
+  const panel=document.getElementById('results-panel'),body=document.getElementById('results-body');
+  const t=LANGS[currentLang]||LANGS.en;panel.style.display='block';
+  body.innerHTML=`<div class="result-meta"><span class="badge badge-error">${t.errBadge}</span><span class="result-query-str">${esc(ips.join(', '))}</span><span class="result-time">${elapsed}s</span></div><div class="raw-block" role="alert" style="color:var(--err)">${esc(String(err))}</div>`;
+  document.getElementById('stats-bar').style.display='none';finalize(panel);
+}
+
+// ── CSV EXPORT ─────────────────────────────────────────────────────
+function copyCSV(){
+  const t=LANGS[currentLang]||LANGS.en;
+  const hdr='ip|is_tor|node_type|nickname|fingerprint|country|as|as_name|first_seen|last_seen|consensus_weight|flags';
+  const rows=lastIPs.map((ip,i)=>{
+    const a=lastAnswers[i];
+    if(!a||!a.is_tor)return[ip,'false','','','','','','','','','',''].join('|');
+    return[a.ip,a.is_tor,a.node_type,a.nickname,a.fingerprint,a.country,a.as,a.as_name,a.first_seen,a.last_seen,a.consensus_weight,(a.flags||[]).join(',')].join('|');
+  });
+  const csv=[hdr,...rows].join('\r\n');
+  navigator.clipboard.writeText(csv).then(()=>{
+    const b=document.getElementById('btn-csv');const l=document.getElementById('csv-label');if(!b)return;
+    b.classList.add('copied');l.textContent=t.btnCopied;
+    setTimeout(()=>{b.classList.remove('copied');l.textContent=t.btnCopy},2000);
+  }).catch(()=>{
+    const ta=document.createElement('textarea');ta.value=csv;ta.style.cssText='position:fixed;opacity:0';
+    document.body.appendChild(ta);ta.focus();ta.select();try{document.execCommand('copy')}catch(_){}document.body.removeChild(ta);
+  });
+}
+function finalize(panel){panel.scrollIntoView({behavior:'smooth',block:'nearest'});panel.setAttribute('tabindex','-1');panel.focus({preventScroll:true})}
+</script>
+</body>
+</html>
