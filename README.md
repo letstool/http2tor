@@ -31,20 +31,13 @@ MIT License — Copyright (c) 2026 letstool
 
 ---
 
-## Why LICENSE_KEY?
+## Why CDN
 
 The first version of `http2tor` built its mmdb database directly from the Tor Project's [Onionoo API](https://onionoo.torproject.org). While that approach worked, it raised a concern: thousands of instances polling Onionoo at their own schedule could place unnecessary load on a volunteer-operated service that the Tor community relies on.
 
 To avoid that, I took the network load onto my own infrastructure. `http2tor` now fetches its data from a personal CDN (`cdn.letstool.net`) that I maintain and fund myself. The data is still sourced directly from Onionoo — nothing changes in terms of accuracy or freshness — but the CDN acts as a buffer, absorbing the traffic so that Onionoo doesn't have to.
 
 **The data itself is free.** Anyone can run `http2tor` without a `LICENSE_KEY` and get the same relay database, with no registration required.
-
-The only thing a license affects is **update frequency**:
-
-- **Without a key** — the database is refreshed **once a week**. More than enough for most use cases, and it costs nothing.
-- **With a key** — the database is refreshed **every 4 hours**, matching the Tor network's own consensus cycle. This is for operators who need near-real-time accuracy and are willing to contribute to help sustain the CDN costs.
-
-If `http2tor` is useful to you and you want to support the project, a license is the way to do it. If you just need reliable Tor detection, the free tier works fine.
 
 ---
 
@@ -53,7 +46,6 @@ If `http2tor` is useful to you and you want to support the project, a license is
 - Single static binary — no external runtime dependencies
 - Embedded web UI and OpenAPI 3.1 specification (`/openapi.json`)
 - **Self-builds its own mmdb** from a gzipped CSV fetched from the **letstool CDN** (`https://cdn.letstool.net/tor/csv`) — no MaxMind account required
-- Optional `LICENSE_KEY` for licensed (higher-quota) CDN access; works anonymously without one
 - **CDN-efficient**: uses `If-Modified-Since` / `304 Not Modified` to avoid redundant downloads when the data has not changed
 - Detects **all Tor relay types**: guard (entry), exit, middle (intermediate), authority, guard+exit
 - Rich relay metadata per IP: node type, flags, nickname, fingerprint, country, AS, first/last seen, consensus weight
@@ -76,8 +68,7 @@ Startup / Periodic update (every 4 hours, or Retry-After on 429)
        │
        ▼
 GET https://cdn.letstool.net/tor/csv
-  Authorization: Basic <LICENSE_KEY>   (optional)
-  If-Modified-Since: <last seen>       (avoids quota if unchanged)
+  If-Modified-Since: <last seen>
        │
        ├─ 304 Not Modified → keep current DB, update timestamp
        ├─ 429 Too Many Requests → log retry-after, skip this cycle
@@ -176,7 +167,6 @@ docker run -it --rm \
   -p 8080:8080 \
   -v ./db:/data:rw \
   -e LISTEN_ADDR=0.0.0.0:8080 \
-  -e LICENSE_KEY="your_token_here" \
   letstool/http2tor:latest
 ```
 
@@ -195,7 +185,6 @@ The database refresh interval is **fixed at 4 hours** and is not configurable. I
 | `-listen-addr`  | `LISTEN_ADDR`        | `127.0.0.1:8080` | Address and port the HTTP server listens on.                                                    |
 | `-db-dir`       | `TOR_DB_DIR`         | `/data`          | Directory used to store and cache the `tor.mmdb` file.                                         |
 | `-db-url`       | `TOR_DB_URL`         | *(none)*         | Base URL of a peer http2tor instance (e.g. `http://host:8080`). When set, enables **peer mode**: the database is downloaded from the peer's `/db/tor` endpoint instead of being fetched from the CDN. |
-| `-license-key`  | `LICENSE_KEY`        | *(none)*         | CDN license token. Sent as `Authorization: Basic <token>`. Optional — works anonymously if unset. |
 | `-max-ips`      | `TOR_MAX_IPS`        | `100`            | Maximum IP addresses accepted in a single batch request.                                        |
 
 **Proxy environment variables** (no CLI flag — standard curl-compatible convention):
@@ -214,11 +203,8 @@ The proxy is configured using Go's standard `http.ProxyFromEnvironment` — iden
 # Default mode: fetch from CDN anonymously every 6 hours
 ./out/http2tor -listen-addr 0.0.0.0:8080
 
-# CDN mode with license key
-LICENSE_KEY=your_token ./out/http2tor
-
 # CDN mode through a corporate HTTP proxy
-HTTPS_PROXY=http://proxy.corp:3128 LICENSE_KEY=your_token ./out/http2tor
+HTTPS_PROXY=http://proxy.corp:3128 ./out/http2tor
 
 # CDN mode through a SOCKS5 proxy
 HTTPS_PROXY=socks5://proxy.corp:1080 ./out/http2tor
@@ -229,8 +215,8 @@ HTTPS_PROXY=socks5://proxy.corp:1080 ./out/http2tor
 # Using environment variables (peer mode)
 TOR_DB_URL=http://upstream-host:8080 ./out/http2tor
 
-# Custom database directory with license key
-LICENSE_KEY=your_token TOR_DB_DIR=/opt/tordb ./out/http2tor
+# Custom database directory
+TOR_DB_DIR=/opt/tordb ./out/http2tor
 ```
 
 ---
@@ -246,7 +232,6 @@ The update strategy depends on whether `TOR_DB_URL` is set:
 The server fetches a gzipped CSV from the letstool CDN:
 ```
 GET https://cdn.letstool.net/tor/csv
-Authorization: Basic <LICENSE_KEY>   (omitted if LICENSE_KEY is unset)
 If-Modified-Since: <previous Last-Modified>
 ```
 
