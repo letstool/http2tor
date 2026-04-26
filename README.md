@@ -51,7 +51,10 @@ To avoid that, I took the network load onto my own infrastructure. `http2tor` no
 - Rich relay metadata per IP: node type, flags, nickname, fingerprint, country, AS, first/last seen, consensus weight
 - Boolean convenience fields: `is_guard`, `is_exit`, `is_middle`, `is_authority`, `is_hsdir`
 - Supports **single IP** and **batch IP** lookups in a single request
-- Automatic database refresh **every 4 hours** (hardcoded); deferred to the CDN `Retry-After` timestamp on rate-limiting
+- Automatic database refresh **every 4 hours** (hardcoded); scheduler adapts to CDN signals:
+  - **429** — deferred to the CDN `Retry-After` timestamp
+  - **410** — retried after 24 h, 48 h, 72 h, 96 h, then stopped permanently
+  - **401** — update process stopped immediately with the server's error message logged
 - **`/db/tor` endpoint**: serves the current `tor.mmdb` for peer sync
 - Configurable listen address, database path, update schedule, and IP batch limit
 - Web UI available in **dark and light mode**, switchable at runtime
@@ -64,15 +67,18 @@ To avoid that, I took the network load onto my own infrastructure. `http2tor` no
 ## How it works
 
 ```
-Startup / Periodic update (every 4 hours, or Retry-After on 429)
+Startup / Periodic update (every 4 hours, or adjusted on CDN signal)
        │
        ▼
 GET https://cdn.letstool.net/tor/csv
   If-Modified-Since: <last seen>
+  Authorization: Basic <LICENSE_KEY>  (if configured)
        │
-       ├─ 304 Not Modified → keep current DB, update timestamp
-       ├─ 429 Too Many Requests → log retry-after, skip this cycle
-       └─ 200 OK → gzip-decompress → parse CSV
+       ├─ 304 Not Modified  → keep current DB, update timestamp, resume 4h cycle
+       ├─ 429 Too Many Requests → log Retry-After, defer next attempt to that timestamp
+       ├─ 410 Gone          → product disabled; retry in 24h → 48h → 72h → 96h → STOP
+       ├─ 401 Unauthorized  → log server message, stop update process permanently
+       └─ 200 OK → gzip-decompress → parse CSV → reset 410 counter
        │
        ▼
 Parse CSV rows → one IP per row
@@ -178,7 +184,7 @@ On first run, the server fetches the gzipped CSV from the CDN, builds the mmdb, 
 
 Each setting can be provided as a CLI flag or an environment variable. The CLI flag always takes priority. Resolution order: **CLI flag → environment variable → default**.
 
-The database refresh interval is **fixed at 4 hours** and is not configurable. If the CDN responds with a `429 Too Many Requests`, the next update is deferred to the unix timestamp specified in the `Retry-After` header.
+The database refresh interval is **fixed at 4 hours** and is not configurable. The scheduler adapts to CDN signals: a `429` defers the next attempt to the `Retry-After` unix timestamp; a `410` triggers a progressive backoff (24 h → 48 h → 72 h → 96 h) then a permanent stop; a `401` stops the update process immediately.
 
 | CLI flag        | Environment variable | Default          | Description                                                                                     |
 |-----------------|----------------------|------------------|-------------------------------------------------------------------------------------------------|
@@ -236,9 +242,11 @@ If-Modified-Since: <previous Last-Modified>
 ```
 
 The CDN responds with:
-- **200 OK** — gzipped CSV, parsed and compiled into `tor.mmdb`
+- **200 OK** — gzipped CSV; parsed and compiled into `tor.mmdb`. The 410 retry counter is reset to zero.
 - **304 Not Modified** — data unchanged; current DB is kept, timestamp updated (no quota consumed)
-- **429 Too Many Requests** — rate-limited; the `Retry-After` header (unix timestamp) is logged; this cycle is skipped
+- **429 Too Many Requests** — rate-limited; the `Retry-After` header (unix timestamp) is logged; next update deferred to that timestamp
+- **410 Gone** — the product is currently disabled on the CDN; the scheduler retries after 24 h, then 48 h, 72 h, 96 h. If the 5th consecutive attempt still returns 410, the update process is stopped permanently. A successful 200 at any point resets the retry counter.
+- **401 Unauthorized** — the `LICENSE_KEY` does not grant access to this product; the server message is logged and the update process is stopped permanently. Check your `LICENSE_KEY` / `-license-key` configuration.
 
 The `Last-Modified` value from each 200 response is stored in `.last_modified_tor` and sent as `If-Modified-Since` on subsequent requests to avoid redundant downloads.
 
@@ -253,7 +261,7 @@ The server downloads `tor.mmdb` directly from the `/db/tor` endpoint of another 
 ./out/http2tor -db-url http://upstream-host:8080
 ```
 
-In both modes, the database is refreshed **every 4 hours**. If the CDN returns `429 Too Many Requests`, the next refresh is deferred to the timestamp in the `Retry-After` response header. Atomic hot-swap guarantees zero downtime during updates.
+In both modes, the database is refreshed **every 4 hours**. CDN-specific signals (429, 410, 401) only affect CDN CSV build mode; peer mode retries on the normal 4-hour interval regardless. Atomic hot-swap guarantees zero downtime during updates.
 
 ---
 

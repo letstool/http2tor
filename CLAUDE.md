@@ -61,10 +61,21 @@ without one.
 - **Two update modes** controlled by `TOR_DB_URL`:
   - **CDN CSV mode** (`TOR_DB_URL` unset, default): `buildTorDBFromCSV` fetches a gzipped CSV from `https://cdn.letstool.net/tor/csv`, decompresses it on the fly via `compress/gzip`, parses it with `encoding/csv`, and compiles a fresh `tor.mmdb` via `mmdbwriter`. If `LICENSE_KEY` is set it is sent as `Authorization: Basic <token>`.
   - **Peer mode** (`TOR_DB_URL` set): `downloadFromPeer` downloads `tor.mmdb` directly from the `/db/tor` endpoint of another `http2tor` instance. No CDN access needed.
-- **CDN protocol**: `fetchCSVFromCDN` sends `If-Modified-Since` (read from `.last_modified_tor`) on every request. A **304 Not Modified** response costs no quota and is treated as success (timestamp refreshed, build skipped). A **429 Too Many Requests** response logs the `Retry-After` unix timestamp and skips the cycle. On **200 OK**, `Last-Modified` is stored in `.last_modified_tor` for the next request.
+- **CDN protocol**: `fetchCSVFromCDN` sends `If-Modified-Since` (read from `.last_modified_tor`) on every request. The switch on the CDN status code handles five cases:
+  - **304 Not Modified** — costs no quota; treated as success (timestamp refreshed, build skipped). Returns the sentinel `errNotModified`.
+  - **429 Too Many Requests** — returns `*errRateLimited` containing the `Retry-After` unix timestamp.
+  - **410 Gone** — product is disabled on the CDN side; returns `*errProductGone` with the JSON body message.
+  - **401 Unauthorized** — license level insufficient; returns `*errUnauthorized` with the human-readable `message` field extracted from the CDN JSON body via `extractJSONMessage`.
+  - **200 OK** — `Last-Modified` is stored in `.last_modified_tor` for subsequent `If-Modified-Since` requests; CSV stream returned to caller.
 - **Hot database swap**: the active `*maxminddb.Reader` is stored in a `sync/atomic.Value` via `dbValue.Swap()`. Both modes call `swapDB()` which atomically replaces the reader and closes the old one — in-flight requests are never interrupted.
 - **Node type classification**: read directly from the `node_type` column of the CDN CSV (pre-classified). The values are: `guard`, `exit`, `guard_and_exit`, `middle`, `authority`.
-- **Periodic scheduler**: a `time.Timer`-based goroutine calls `updateDB` every **4 hours** (hardcoded `updateInterval` constant). If `updateDB` returns an `*errRateLimited` (CDN 429), the timer is reset to `Retry-After - now` instead of 4 hours, then resumes the normal 4-hour cycle on the next successful call. Other errors reset to the normal 4-hour interval. The same 4-hour interval applies in peer mode. `updateDB` dispatches to `downloadFromPeer` or `buildTorDBFromCSV` depending on whether `TOR_DB_URL` is set. `.last_update_tor` stores the Unix timestamp of the last successful update; `ensureDB` reuses the cached DB if its age is below `updateInterval`.
+- **Periodic scheduler**: a `time.Timer`-based goroutine calls `updateDB` every **4 hours** (hardcoded `updateInterval` constant). The goroutine maintains a local `goneAttempt` counter (starts at 0) and dispatches on the error type returned by `updateDB`:
+  - **nil (success)** — resets `goneAttempt` to 0; timer reset to normal 4-hour interval.
+  - **`*errRateLimited` (CDN 429)** — timer reset to `Retry-After - now`; resumes normal cycle on the next success.
+  - **`*errProductGone` (CDN 410)** — waits `goneRetrySchedule[goneAttempt]` (24 h, 48 h, 72 h, 96 h in order), increments `goneAttempt`; if all four slots are exhausted the goroutine returns permanently. A subsequent 200 resets the counter to 0.
+  - **`*errUnauthorized` (CDN 401)** — logs the server message and the configuration hint, then the goroutine returns permanently (no further retries).
+  - **Any other error** — logs the error and resets to the normal 4-hour interval.
+  The same 4-hour interval applies in peer mode; CDN-specific error types are never produced by `downloadFromPeer`. `updateDB` dispatches to `downloadFromPeer` or `buildTorDBFromCSV` depending on whether `TOR_DB_URL` is set. `.last_update_tor` stores the Unix timestamp of the last successful update; `ensureDB` reuses the cached DB if its age is below `updateInterval`.
 - **Marker files** in `TOR_DB_DIR`:
   - `.last_update_tor` — Unix timestamp of the last successful build/download.
   - `.last_modified_tor` — `Last-Modified` HTTP header value from the last CDN 200 response; sent as `If-Modified-Since` on the next request.

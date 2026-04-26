@@ -481,6 +481,40 @@ func (e *errRateLimited) Error() string {
 		time.Unix(e.RetryAfter, 0).UTC().Format(time.RFC3339))
 }
 
+// errProductGone is returned by fetchCSVFromCDN when the CDN responds 410 (Gone).
+// This means the product is currently disabled on the CDN side.
+// The scheduler will retry at increasing intervals (24h, 48h, 72h, 96h) then stop.
+type errProductGone struct {
+	Body string // raw body / message returned by the CDN
+}
+
+func (e *errProductGone) Error() string {
+	return fmt.Sprintf("CDN product gone (410): %s", e.Body)
+}
+
+// errUnauthorized is returned by fetchCSVFromCDN when the CDN responds 401.
+// Message contains the human-readable explanation sent by the server.
+// The scheduler will display the message and stop the update process permanently.
+type errUnauthorized struct {
+	Message string
+}
+
+func (e *errUnauthorized) Error() string {
+	return fmt.Sprintf("CDN unauthorized (401): %s", e.Message)
+}
+
+// extractJSONMessage attempts to extract the "message" field from a JSON body.
+// Falls back to the raw body string if parsing fails or the field is absent.
+func extractJSONMessage(body []byte) string {
+	var obj struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &obj); err == nil && obj.Message != "" {
+		return obj.Message
+	}
+	return strings.TrimSpace(string(body))
+}
+
 // fetchCSVFromCDN fetches the gzipped CSV from the CDN and returns an
 // io.ReadCloser positioned at the start of the decompressed CSV stream.
 // The caller is responsible for closing the returned reader.
@@ -524,6 +558,16 @@ func fetchCSVFromCDN(ctx context.Context) (io.ReadCloser, string, error) {
 		resp.Body.Close()
 		ts, _ := strconv.ParseInt(strings.TrimSpace(ra), 10, 64)
 		return nil, "", &errRateLimited{RetryAfter: ts}
+
+	case http.StatusGone: // 410 — product disabled on CDN
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		return nil, "", &errProductGone{Body: strings.TrimSpace(string(body))}
+
+	case http.StatusUnauthorized: // 401 — insufficient license level
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		return nil, "", &errUnauthorized{Message: extractJSONMessage(body)}
 
 	case http.StatusOK: // 200 — proceed
 
@@ -775,9 +819,23 @@ func ensureDB(ctx context.Context) error {
 
 /* ---------- Scheduler ---------- */
 
+// goneRetrySchedule defines the successive wait durations after a CDN 410 (Gone).
+// After the last entry, the update process is stopped permanently.
+var goneRetrySchedule = []time.Duration{
+	24 * time.Hour,
+	48 * time.Hour,
+	72 * time.Hour,
+	96 * time.Hour,
+}
+
 // schedulePeriodicUpdate fires updateDB every updateInterval (4 h).
-// If updateDB returns an *errRateLimited (CDN 429), the next attempt is
-// deferred until the Retry-After timestamp instead of the normal interval.
+//
+// Special CDN status codes alter the normal schedule:
+//
+//   - 429 (rate-limited): defers the next attempt to the CDN-supplied Retry-After timestamp.
+//   - 410 (gone/disabled): retries after 24 h, 48 h, 72 h, 96 h, then stops permanently.
+//     A successful 200 in-between resets the 410 counter to zero.
+//   - 401 (unauthorized): logs the server message and stops the update process permanently.
 func schedulePeriodicUpdate(ctx context.Context) {
 	mode := "CDN CSV build"
 	if dbURL != "" {
@@ -786,31 +844,72 @@ func schedulePeriodicUpdate(ctx context.Context) {
 	log.Printf("Tor DB auto-refresh every %s [mode: %s]", updateInterval, mode)
 
 	go func() {
+		goneAttempt := 0 // number of consecutive 410 responses received so far
+
 		timer := time.NewTimer(updateInterval)
 		defer timer.Stop()
 		for {
 			select {
 			case <-timer.C:
 				err := updateDB(ctx)
-				if err != nil {
-					var rl *errRateLimited
-					if errors.As(err, &rl) && rl.RetryAfter > 0 {
-						// Wait until the CDN-specified Retry-After timestamp.
-						wait := time.Until(time.Unix(rl.RetryAfter, 0))
-						if wait <= 0 {
-							wait = updateInterval
-						}
-						log.Printf("Rate-limited by CDN: next attempt in %s (at %s)",
-							wait.Round(time.Second),
-							time.Unix(rl.RetryAfter, 0).UTC().Format(time.RFC3339))
-						timer.Reset(wait)
-					} else {
-						log.Printf("Scheduled update failed: %v — retrying in %s", err, updateInterval)
-						timer.Reset(updateInterval)
+
+				if err == nil {
+					// Successful update — reset the 410 counter.
+					if goneAttempt > 0 {
+						log.Printf("CDN: update succeeded after %d gone-retry attempt(s) — counter reset", goneAttempt)
+						goneAttempt = 0
 					}
-				} else {
 					timer.Reset(updateInterval)
+					continue
 				}
+
+				// --- 429 rate-limited ---
+				var rl *errRateLimited
+				if errors.As(err, &rl) && rl.RetryAfter > 0 {
+					wait := time.Until(time.Unix(rl.RetryAfter, 0))
+					if wait <= 0 {
+						wait = updateInterval
+					}
+					log.Printf("Rate-limited by CDN: next attempt in %s (at %s)",
+						wait.Round(time.Second),
+						time.Unix(rl.RetryAfter, 0).UTC().Format(time.RFC3339))
+					timer.Reset(wait)
+					continue
+				}
+
+				// --- 410 product gone/disabled ---
+				var gone *errProductGone
+				if errors.As(err, &gone) {
+					if goneAttempt >= len(goneRetrySchedule) {
+						log.Printf("CDN [410] Product is gone/disabled and all %d retry attempts have been exhausted — "+
+							"stopping the update process permanently.", len(goneRetrySchedule))
+						log.Printf("CDN [410] Last server message: %s", gone.Body)
+						return
+					}
+					wait := goneRetrySchedule[goneAttempt]
+					log.Printf("CDN [410] Product gone/disabled (attempt %d/%d) — next retry in %s.",
+						goneAttempt+1, len(goneRetrySchedule), wait)
+					if gone.Body != "" {
+						log.Printf("CDN [410] Server message: %s", gone.Body)
+					}
+					goneAttempt++
+					timer.Reset(wait)
+					continue
+				}
+
+				// --- 401 unauthorized — stop permanently ---
+				var unauth *errUnauthorized
+				if errors.As(err, &unauth) {
+					log.Printf("CDN [401] Authorization refused — stopping the update process permanently.")
+					log.Printf("CDN [401] Server message: %s", unauth.Message)
+					log.Printf("CDN [401] Please check your LICENSE_KEY / --license-key configuration.")
+					return
+				}
+
+				// --- Any other error: log and retry at normal interval ---
+				log.Printf("Scheduled update failed: %v — retrying in %s", err, updateInterval)
+				timer.Reset(updateInterval)
+
 			case <-ctx.Done():
 				return
 			}
