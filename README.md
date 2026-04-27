@@ -1,6 +1,6 @@
 # http2tor
 
-> **Tor-over-HTTP** — A lightweight HTTP gateway that exposes Tor network detection as a JSON REST API.
+> **Tor-over-HTTP** — A lightweight HTTP gateway that exposes Tor IP database as a JSON REST API.
 
 Built in Go, it accepts a `POST` request with one or more IP addresses and returns structured Tor relay data sourced from a **self-built mmdb database** — constructed from a gzipped CSV served by the **letstool CDN** (`https://cdn.letstool.net/tor/csv`), with zero runtime dependencies.
 
