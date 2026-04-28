@@ -26,7 +26,7 @@ It is **not maintained**: no bug fixes, dependency updates, or new features are 
 This project is licensed under the **MIT License** — see the [`LICENSE`](LICENSE) file for details.
 
 ```
-MIT License — Copyright (c) 2026 letstool
+MIT License — Copyright (c) 2026 letstool.net
 ```
 
 ---
