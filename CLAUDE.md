@@ -44,7 +44,7 @@ without one.
 │   └── windows_run.cmd           # Run binary on Windows
 ├── go.mod
 ├── go.sum
-├── LICENSE                       # MIT
+├── LICENSE                       # Apache 2.0
 ├── README.md
 └── CLAUDE.md                     # This file
 ```

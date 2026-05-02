@@ -40,7 +40,7 @@ LABEL org.opencontainers.image.title="http2tor" \
       org.opencontainers.image.description="HTTP Server → tor (Go)" \
       org.opencontainers.image.source="https://github.com/letstool/http2tor" \
       org.opencontainers.image.authors="LetsTool.net" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="Apache-2.0"
 
 VOLUME ["/data"]
 
